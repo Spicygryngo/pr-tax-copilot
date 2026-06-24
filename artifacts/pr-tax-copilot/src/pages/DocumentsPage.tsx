@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { AppHeader, Card, Pill } from "../components/ui-primitives";
 import { DocStatusPill } from "../components/DocStatusPill";
 import { useStore } from "../lib/useStore";
-import { addDocument, getSession, updateDocument } from "../lib/store";
+import { addDocument, getDocuments, getSession, updateDocument } from "../lib/store";
 import { DOCUMENT_TYPES, type DocumentType, type TaxDocument } from "../lib/types";
 import { mockExtract } from "../lib/extract";
 
@@ -24,7 +24,13 @@ export default function DocumentsPage() {
     const year = profile?.filingYear ?? new Date().getFullYear() - 1;
 
     for (const file of Array.from(files)) {
-      if (documents.length >= TRIAL_DOC_LIMIT) break;
+      // Read fresh count from localStorage on every iteration — prevents
+      // the stale-closure bypass where selecting 15 files at once sneaks
+      // past the limit because `documents.length` from the render closure
+      // hasn't updated yet.
+      const liveCount = getDocuments().length;
+      if (liveCount >= TRIAL_DOC_LIMIT) break;
+
       const id = `doc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
       const now = new Date().toISOString();
       const doc: TaxDocument = {
@@ -44,7 +50,8 @@ export default function DocumentsPage() {
       addDocument(doc);
 
       try {
-        const apiUrl = `${import.meta.env.BASE_URL}api/extract`.replace(/\/+/g, "/").replace(":/", "://");
+        const base = import.meta.env.BASE_URL ?? "/";
+        const apiUrl = (base.endsWith("/") ? base : base + "/") + "api/extract";
         const res = await fetch(apiUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -79,6 +86,7 @@ export default function DocumentsPage() {
         });
       }
     }
+
     setBusy(false);
     if (inputRef.current) inputRef.current.value = "";
   }
@@ -96,7 +104,11 @@ export default function DocumentsPage() {
           <div className="flex flex-wrap items-end gap-3">
             <div className="min-w-48">
               <span className="label">Document type (optional)</span>
-              <select className="input" value={hintType} onChange={(e) => setHintType(e.target.value as DocumentType)}>
+              <select
+                className="input"
+                value={hintType}
+                onChange={(e) => setHintType(e.target.value as DocumentType)}
+              >
                 {DOCUMENT_TYPES.map((t) => (
                   <option key={t} value={t}>{t.replace(/_/g, " ")}</option>
                 ))}
@@ -124,14 +136,16 @@ export default function DocumentsPage() {
             </p>
           )}
           <p className="mt-3 text-xs text-ink-muted">
-            Files are private to your account. In production they are stored encrypted with
-            signed-URL access only — never public.
+            Files are private to your account. In production they are stored
+            encrypted with signed-URL access only — never public.
           </p>
         </Card>
 
         <Card title="Your documents">
           {documents.length === 0 ? (
-            <p className="text-sm text-ink-muted">No documents yet. Upload receipts, statements, or forms to begin.</p>
+            <p className="text-sm text-ink-muted">
+              No documents yet. Upload receipts, statements, or forms to begin.
+            </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -149,16 +163,29 @@ export default function DocumentsPage() {
                   {documents.map((d) => (
                     <tr key={d.id} className="border-b border-border/60">
                       <td className="py-3 pr-4 text-ink">{d.fileName}</td>
-                      <td className="py-3 pr-4 text-ink-muted">{d.documentType.replace(/_/g, " ")}</td>
-                      <td className="py-3 pr-4 font-mono text-ink-body">
-                        {d.amount != null ? `${d.currency ?? "USD"} ${d.amount.toLocaleString()}` : "—"}
+                      <td className="py-3 pr-4 text-ink-muted">
+                        {d.documentType.replace(/_/g, " ")}
                       </td>
                       <td className="py-3 pr-4 font-mono text-ink-body">
-                        {d.confidence != null ? `${Math.round(d.confidence * 100)}%` : "—"}
+                        {d.amount != null
+                          ? `${d.currency ?? "USD"} ${d.amount.toLocaleString()}`
+                          : "—"}
                       </td>
-                      <td className="py-3 pr-4"><DocStatusPill status={d.status} /></td>
+                      <td className="py-3 pr-4 font-mono text-ink-body">
+                        {d.confidence != null
+                          ? `${Math.round(d.confidence * 100)}%`
+                          : "—"}
+                      </td>
+                      <td className="py-3 pr-4">
+                        <DocStatusPill status={d.status} />
+                      </td>
                       <td className="py-3 text-right">
-                        <Link href={`/documents/${d.id}`} className="text-accent hover:underline">Open</Link>
+                        <Link
+                          href={`/documents/${d.id}`}
+                          className="text-accent hover:underline"
+                        >
+                          Open
+                        </Link>
                       </td>
                     </tr>
                   ))}
